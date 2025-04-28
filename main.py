@@ -3,67 +3,65 @@ import requests
 import openai
 from flask import Flask, request
 
-# Inicializa Flask
 app = Flask(__name__)
 
-# 1️⃣ Carga las variables de entorno
-env = os.environ\VERIFY_TOKEN = env.get("VERIFY_TOKEN")
-PAGE_ACCESS_TOKEN = env.get("PAGE_ACCESS_TOKEN")
-OPENAI_API_KEY = env.get("OPENAI_API_KEY")
+# Carga las variables de entorno
+VERIFY_TOKEN     = os.environ.get("VERIFY_TOKEN")
+PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
+OPENAI_API_KEY   = os.environ.get("OPENAI_API_KEY")
+
 openai.api_key = OPENAI_API_KEY
 
-# 2️⃣ GET para verificación de webhook
-@app.route("/", methods=["GET"])
-def verify_webhook():
-    mode = request.args.get("hub.mode")
-    token = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
-
-    if mode == "subscribe" and token == VERIFY_TOKEN:
+# 👉 1) GET para verificación del webhook
+@app.route('/', methods=['GET'])
+def verify():
+    mode      = request.args.get('hub.mode')
+    token     = request.args.get('hub.verify_token')
+    challenge = request.args.get('hub.challenge')
+    if mode == 'subscribe' and token == VERIFY_TOKEN:
         return challenge, 200
-    return "Forbidden", 403
+    return 'Error de verificación', 403
 
-# 3️⃣ POST para recibir eventos (mensajes, reacciones, etc.)
-@app.route("/", methods=["POST"])
-def handle_webhook():
+# 👉 2) POST para recibir mensajes de Facebook/Instagram/WhatsApp
+@app.route('/', methods=['POST'])
+def webhook():
     data = request.get_json()
-
+    # Asegúrate de que el objeto sea "page" (para páginas)
     if data.get("object") == "page":
-        for entry in data.get("entry", []):
-            for event in entry.get("messaging", []):
-                sender_id = event["sender"]["id"]
-                # Procesa solo mensajes de texto
-                message = event.get("message", {})
-                text = message.get("text")
-                if text:
-                    # Llamada a OpenAI GPT-4
-                    response = openai.ChatCompletion.create(
+        for entry in data.get('entry', []):
+            for msg_event in entry.get('messaging', []):
+                sender_id = msg_event['sender']['id']
+                # Solo procesamos si hay un texto
+                if 'message' in msg_event and 'text' in msg_event['message']:
+                    user_text = msg_event['message']['text']
+
+                    # 👉 3) Llamada a OpenAI GPT-4
+                    resp = openai.ChatCompletion.create(
                         model="gpt-4",
                         messages=[
-                            {"role": "system", "content": "Eres un asesor espiritual cristiano, amable y sabio."},
-                            {"role": "user", "content": text}
+                            {"role": "system",
+                             "content": "Eres un asesor espiritual cristiano, amable y sabio."},
+                            {"role": "user", "content": user_text}
                         ]
                     )
-                    answer = response.choices[0].message.content
+                    answer = resp.choices[0].message.content
 
-                    # Envía la respuesta de vuelta al usuario
+                    # 👉 4) Envía la respuesta de vuelta al usuario
                     send_message(sender_id, answer)
 
-        return "EVENT_RECEIVED", 200
+    return 'EVENT_RECEIVED', 200
 
-    return "No page object", 404
-
-# 4️⃣ Función auxiliar para enviar mensajes
-def send_message(recipient_id: str, text: str):
+def send_message(recipient_id, text):
     url = "https://graph.facebook.com/v16.0/me/messages"
     params = {"access_token": PAGE_ACCESS_TOKEN}
+    headers = {"Content-Type": "application/json"}
     payload = {
         "messaging_type": "RESPONSE",
         "recipient": {"id": recipient_id},
         "message": {"text": text}
     }
-    headers = {"Content-Type": "application/json"}
     requests.post(url, params=params, json=payload, headers=headers)
 
-# Punto de entrada\if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+if __name__ == '__main__':
+    # Mismo puerto que configuraste en Render
+    app.run(host='0.0.0.0', port=10000)
